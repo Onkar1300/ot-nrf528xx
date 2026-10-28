@@ -33,4 +33,8 @@
 #error "Platform nrf52811 doesn't support configuration option: OPENTHREAD_CONFIG_RADIO_915MHZ_OQPSK_SUPPORT"
 #endif
 
+#if OPENTHREAD_CONFIG_MULTI_PAN_ENABLE
+#error "Platform nrf52811 doesn't support configuration option: OPENTHREAD_CONFIG_MULTI_PAN_ENABLE (not enough RAM)"
+#endif
+
 #endif /* OPENTHREAD_CORE_NRF52811_CONFIG_CHECK_H_ */

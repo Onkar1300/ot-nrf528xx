@@ -65,6 +65,19 @@
 #include <openthread/config.h>
 #include <openthread/random_noncrypto.h>
 
+#if OPENTHREAD_CONFIG_MULTI_PAN_ENABLE
+#include <nrf_802154_filter.h>
+#include <nrf_802154_frame_parser.h>
+
+#if OPENTHREAD_CONFIG_THREAD_VERSION < OT_THREAD_VERSION_1_2
+#error "Multi-PAN needs the radio transmit security of Thread 1.2 or later"
+#endif
+
+#if NRF_802154_PIB_PAN_ID_LIST_SIZE < OT_RADIO_MULTI_PAN_MAX_KEYS
+#error "The 802.15.4 driver PAN ID list is smaller than the Multi-PAN key map"
+#endif
+#endif // OPENTHREAD_CONFIG_MULTI_PAN_ENABLE
+
 // clang-format off
 
 #define SHORT_ADDRESS_SIZE    2            ///< Size of MAC short address.
@@ -150,6 +163,12 @@ static uint32_t         sAckFrameCounter;
 static uint8_t          sAckKeyId;
 #endif
 
+#if OPENTHREAD_CONFIG_MULTI_PAN_ENABLE
+// Multi-PAN key map. Entry 0 is the router's own PAN, unused entries are all zero.
+static otPanIdKeyMaterial sPanKeys[OT_RADIO_MULTI_PAN_MAX_KEYS];
+static uint8_t            sPanKeysCount; ///< Entries in use: index of the last used entry plus one.
+#endif
+
 static int8_t GetTransmitPowerForChannel(uint8_t aChannel)
 {
     int8_t channelMaxPower = nrf5GetChannelMaxTransmitPower(aChannel);
@@ -211,6 +230,11 @@ static void dataInit(void)
     memset(&sAckFrame, 0, sizeof(sAckFrame));
 
     sPrevMacFrameCounter = 0;
+
+#if OPENTHREAD_CONFIG_MULTI_PAN_ENABLE
+    memset(sPanKeys, 0, sizeof(sPanKeys));
+    sPanKeysCount = 0;
+#endif
 }
 
 static void convertShortAddress(uint8_t *aTo, uint16_t aFrom)
@@ -275,6 +299,144 @@ static inline void clearPendingEvents(void)
     } while (__STREXW(pendingEvents, (uint32_t *)&sPendingEvents));
 }
 
+#if OPENTHREAD_CONFIG_MULTI_PAN_ENABLE
+static bool isAllZero(const void *aBuffer, size_t aLength)
+{
+    const uint8_t *buffer = (const uint8_t *)aBuffer;
+    bool           result = true;
+
+    for (size_t i = 0; i < aLength; i++)
+    {
+        if (buffer[i] != 0)
+        {
+            result = false;
+            break;
+        }
+    }
+
+    return result;
+}
+
+static bool isPanKeysEntryUsed(const otPanIdKeyMaterial *aEntry)
+{
+    return (aEntry->panId != 0) || !isAllZero(&aEntry->curMacKey, sizeof(aEntry->curMacKey)) ||
+           !isAllZero(&aEntry->prevMacKey, sizeof(aEntry->prevMacKey)) ||
+           !isAllZero(&aEntry->nextMacKey, sizeof(aEntry->nextMacKey));
+}
+
+static otPanIdKeyMaterial *findPanKeys(uint16_t aPanId)
+{
+    otPanIdKeyMaterial *entry = NULL;
+
+    for (uint8_t i = 0; i < sPanKeysCount; i++)
+    {
+        if ((sPanKeys[i].panId == aPanId) && isPanKeysEntryUsed(&sPanKeys[i]))
+        {
+            entry = &sPanKeys[i];
+            break;
+        }
+    }
+
+    return entry;
+}
+
+/**
+ * Selects the MAC key of a PAN.
+ *
+ * @param[in]  aPanId      The PAN ID of the frame.
+ * @param[in]  aRouterKey  The router key that stock code would use: `sPrevKey`, `sCurrKey` or `sNextKey`.
+ *
+ * @returns The key of @p aPanId in the same slot (previous, current or next) as @p aRouterKey. The router's own PAN
+ *          (map entry 0) and a PAN without a map entry use @p aRouterKey. Entry 0 holds the same keys as the router
+ *          keys, but the router keys are set first on a key rotation, so they are never older than the map.
+ */
+static otMacKeyMaterial *panKeyFor(uint16_t aPanId, otMacKeyMaterial *aRouterKey)
+{
+    otPanIdKeyMaterial *entry = findPanKeys(aPanId);
+    otMacKeyMaterial   *key   = aRouterKey;
+
+    otEXPECT((entry != NULL) && (entry != &sPanKeys[0]));
+
+    if (aRouterKey == &sPrevKey)
+    {
+        key = &entry->prevMacKey;
+    }
+    else if (aRouterKey == &sCurrKey)
+    {
+        key = &entry->curMacKey;
+    }
+    else if (aRouterKey == &sNextKey)
+    {
+        key = &entry->nextMacKey;
+    }
+
+exit:
+    return key;
+}
+
+static uint16_t readPanId(const uint8_t *aPanId) { return (uint16_t)(aPanId[0] | (aPanId[1] << 8)); }
+
+/**
+ * Gets the PAN ID that selects the key of a transmitted frame: the destination PAN ID, or the source PAN ID when there
+ * is no destination PAN ID (the same rule as the OpenThread `SubMac`).
+ *
+ * @param[in]   aFrame  The frame, starting with the PHR.
+ * @param[out]  aPanId  The PAN ID.
+ *
+ * @retval TRUE   @p aPanId is set.
+ * @retval FALSE  The frame has no PAN ID.
+ */
+static bool getTxPanId(const uint8_t *aFrame, uint16_t *aPanId)
+{
+    nrf_802154_frame_parser_mhr_data_t mhrData;
+    const uint8_t                     *panId = NULL;
+
+    if (nrf_802154_frame_parser_mhr_parse(aFrame, &mhrData))
+    {
+        panId = (mhrData.p_dst_panid != NULL) ? mhrData.p_dst_panid : mhrData.p_src_panid;
+    }
+
+    if (panId != NULL)
+    {
+        *aPanId = readPanId(panId);
+    }
+
+    return (panId != NULL);
+}
+
+/**
+ * Gets the PAN ID of an Enhanced ACK: its destination PAN ID, or, as an ACK of a frame with PAN ID compression has
+ * none, the destination PAN ID of the acknowledged frame, remembered by the receive filter.
+ *
+ * Runs in the radio interrupt, right after the acknowledged frame was filtered.
+ *
+ * @param[in]   aAckFrame  The ACK frame, starting with the PHR.
+ * @param[out]  aPanId     The PAN ID.
+ *
+ * @retval TRUE   @p aPanId is set.
+ * @retval FALSE  Neither the ACK nor the acknowledged frame has a PAN ID.
+ */
+static bool getAckPanId(const uint8_t *aAckFrame, uint16_t *aPanId)
+{
+    nrf_802154_frame_parser_mhr_data_t mhrData;
+    uint8_t                            panId[SHORT_ADDRESS_SIZE];
+    bool                               found = false;
+
+    if (nrf_802154_frame_parser_mhr_parse(aAckFrame, &mhrData) && (mhrData.p_dst_panid != NULL))
+    {
+        *aPanId = readPanId(mhrData.p_dst_panid);
+        found   = true;
+    }
+    else if (nrf_802154_filter_last_dst_pan_id_get(panId))
+    {
+        *aPanId = readPanId(panId);
+        found   = true;
+    }
+
+    return found;
+}
+#endif // OPENTHREAD_CONFIG_MULTI_PAN_ENABLE
+
 #if OPENTHREAD_CONFIG_THREAD_VERSION >= OT_THREAD_VERSION_1_2
 static void txAckProcessSecurity(uint8_t *aAckFrame)
 {
@@ -322,6 +484,18 @@ static void txAckProcessSecurity(uint8_t *aAckFrame)
         otEXPECT(false);
     }
 
+#if OPENTHREAD_CONFIG_MULTI_PAN_ENABLE
+    {
+        // Multi-PAN: the same key slot, but of the PAN of the acknowledged frame. The frame counters stay global.
+        uint16_t panId;
+
+        if (getAckPanId(aAckFrame, &panId))
+        {
+            key = panKeyFor(panId, key);
+        }
+    }
+#endif
+
     sAckKeyId           = keyId;
     sAckedWithSecEnhAck = true;
 
@@ -364,7 +538,15 @@ void otPlatRadioSetPanId(otInstance *aInstance, uint16_t aPanId)
     uint8_t address[SHORT_ADDRESS_SIZE];
     convertShortAddress(address, aPanId);
 
+#if OPENTHREAD_CONFIG_MULTI_PAN_ENABLE
+    // Multi-PAN: the host registers its own PAN and every listed PAN with one call each. They are all accepted until
+    // the next key map (`otPlatRadioSetMacKeyMultiPan()`) replaces the list.
+    CRITICAL_REGION_ENTER();
+    (void)nrf_802154_pan_id_add(address);
+    CRITICAL_REGION_EXIT();
+#else
     nrf_802154_pan_id_set(address);
+#endif
 }
 
 void otPlatRadioSetExtendedAddress(otInstance *aInstance, const otExtAddress *aExtAddress)
@@ -1261,6 +1443,18 @@ void nrf_802154_tx_started(const uint8_t *aFrame)
 
     sTransmitFrame.mInfo.mTxInfo.mAesKey = &sCurrKey;
 
+#if OPENTHREAD_CONFIG_MULTI_PAN_ENABLE
+    {
+        // Multi-PAN: the current key of the PAN the frame is sent on.
+        uint16_t panId;
+
+        if (getTxPanId(aFrame, &panId))
+        {
+            sTransmitFrame.mInfo.mTxInfo.mAesKey = panKeyFor(panId, &sCurrKey);
+        }
+    }
+#endif
+
     processSecurity = true;
 #endif // OPENTHREAD_CONFIG_THREAD_VERSION >= OT_THREAD_VERSION_1_2
 
@@ -1319,6 +1513,75 @@ void otPlatRadioSetMacKey(otInstance             *aInstance,
 
     CRITICAL_REGION_EXIT();
 }
+
+#if OPENTHREAD_CONFIG_MULTI_PAN_ENABLE
+void otPlatRadioSetMacKeyMultiPan(otInstance               *aInstance,
+                                  uint8_t                   aKeyIdMode,
+                                  uint8_t                   aKeyIndex,
+                                  const otPanIdKeyMaterial *aPanIdKeyMaterials,
+                                  otRadioKeyType            aKeyType)
+{
+    uint8_t panIds[OT_RADIO_MULTI_PAN_MAX_KEYS][SHORT_ADDRESS_SIZE];
+    uint8_t numPanIds  = 0;
+    uint8_t numEntries = 0;
+
+    OT_UNUSED_VARIABLE(aInstance);
+    OT_UNUSED_VARIABLE(aKeyIdMode);
+    OT_UNUSED_VARIABLE(aKeyType);
+
+    assert(aKeyType == OT_KEY_TYPE_LITERAL_KEY);
+    assert(aPanIdKeyMaterials != NULL);
+
+    // The PANs of the used entries, router's own PAN (entry 0) first, become the PAN ID list of the receive filter.
+    // This also drops PANs that left the list since the previous map.
+    for (uint8_t i = 0; i < OT_RADIO_MULTI_PAN_MAX_KEYS; i++)
+    {
+        uint8_t panId[SHORT_ADDRESS_SIZE];
+        bool    isDuplicate = false;
+
+        if (!isPanKeysEntryUsed(&aPanIdKeyMaterials[i]))
+        {
+            continue;
+        }
+
+        numEntries = i + 1;
+        convertShortAddress(panId, aPanIdKeyMaterials[i].panId);
+
+        for (uint8_t j = 0; j < numPanIds; j++)
+        {
+            if (memcmp(panIds[j], panId, SHORT_ADDRESS_SIZE) == 0)
+            {
+                isDuplicate = true;
+                break;
+            }
+        }
+
+        if (!isDuplicate)
+        {
+            memcpy(panIds[numPanIds++], panId, SHORT_ADDRESS_SIZE);
+        }
+    }
+
+    // The keys and the PAN ID list are read in the radio interrupt. The frame counters are not changed: the map is
+    // also sent when the PANs or their keys change, without a key rotation.
+    CRITICAL_REGION_ENTER();
+
+    sKeyId = aKeyIndex;
+
+    memcpy(sPanKeys, aPanIdKeyMaterials, numEntries * sizeof(sPanKeys[0]));
+
+    if (sPanKeysCount > numEntries)
+    {
+        memset(&sPanKeys[numEntries], 0, (sPanKeysCount - numEntries) * sizeof(sPanKeys[0]));
+    }
+
+    sPanKeysCount = numEntries;
+
+    nrf_802154_pan_id_list_set(&panIds[0][0], numPanIds);
+
+    CRITICAL_REGION_EXIT();
+}
+#endif // OPENTHREAD_CONFIG_MULTI_PAN_ENABLE
 
 void otPlatRadioSetMacFrameCounter(otInstance *aInstance, uint32_t aMacFrameCounter)
 {
