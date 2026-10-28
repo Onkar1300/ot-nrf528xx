@@ -74,4 +74,20 @@
  */
 nrf_802154_rx_error_t nrf_802154_filter_frame_part(const uint8_t * p_data, uint8_t * p_num_bytes);
 
+/**
+ * @brief Gets the destination PAN ID of the last frame checked by @ref nrf_802154_filter_frame_part.
+ *
+ * An ACK is only sent for a frame that passed the filter, and no other frame is filtered between
+ * that frame and its ACK. So when called from @ref nrf_802154_tx_ack_started, this is the
+ * destination PAN ID of the acknowledged frame, also when the ACK itself carries no PAN ID.
+ * The value only changes in the radio interrupt.
+ *
+ * @param[out] p_pan_id  Destination PAN ID of the frame (2 bytes, little-endian). Only written
+ *                       if the frame has a destination PAN ID.
+ *
+ * @retval true   The frame has a destination PAN ID.
+ * @retval false  The frame has no destination PAN ID.
+ */
+bool nrf_802154_filter_last_dst_pan_id_get(uint8_t * p_pan_id);
+
 #endif /* NRF_802154_FILTER_H_ */

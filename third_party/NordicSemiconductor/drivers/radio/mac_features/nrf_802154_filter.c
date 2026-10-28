@@ -53,6 +53,9 @@
 #define SHORT_ADDR_CHECK_OFFSET    (DEST_ADDR_OFFSET + SHORT_ADDRESS_SIZE)
 #define EXTENDED_ADDR_CHECK_OFFSET (DEST_ADDR_OFFSET + EXTENDED_ADDRESS_SIZE)
 
+static uint8_t m_last_dst_pan_id[PAN_ID_SIZE]; ///< Destination PAN Id of the last filtered frame.
+static bool    m_last_dst_pan_id_present;      ///< If the last filtered frame has a destination PAN Id.
+
 /**
  * @brief Check if given frame version is allowed for given frame type.
  *
@@ -311,13 +314,14 @@ static bool dst_pan_id_check(const uint8_t * p_panid, uint8_t frame_type)
 {
     bool result;
 
-    if ((0 == memcmp(p_panid, nrf_802154_pib_pan_id_get(), PAN_ID_SIZE)) ||
+    if (nrf_802154_pib_pan_id_exists(p_panid) ||
         (0 == memcmp(p_panid, BROADCAST_ADDRESS, PAN_ID_SIZE)))
     {
         result = true;
     }
     else if ((FRAME_TYPE_BEACON == frame_type) &&
-             (0 == memcmp(nrf_802154_pib_pan_id_get(), BROADCAST_ADDRESS, PAN_ID_SIZE)))
+             ((0 == memcmp(nrf_802154_pib_pan_id_get(), BROADCAST_ADDRESS, PAN_ID_SIZE)) ||
+              nrf_802154_pib_pan_id_exists(BROADCAST_ADDRESS)))
     {
         result = true;
     }
@@ -404,6 +408,9 @@ static nrf_802154_rx_error_t dst_addr_check(const uint8_t * p_data, uint8_t fram
 
     if (mhr_data.p_dst_panid != NULL)
     {
+        memcpy(m_last_dst_pan_id, mhr_data.p_dst_panid, PAN_ID_SIZE);
+        m_last_dst_pan_id_present = true;
+
         if (!dst_pan_id_check(mhr_data.p_dst_panid, frame_type))
         {
             return NRF_802154_RX_ERROR_INVALID_DEST_ADDR;
@@ -446,6 +453,9 @@ nrf_802154_rx_error_t nrf_802154_filter_frame_part(const uint8_t * p_data, uint8
     switch (*p_num_bytes)
     {
         case FCF_CHECK_OFFSET:
+            // First call for a new frame.
+            m_last_dst_pan_id_present = false;
+
             if (p_data[0] < IMM_ACK_LENGTH || p_data[0] > MAX_PACKET_SIZE)
             {
                 result = NRF_802154_RX_ERROR_INVALID_LENGTH;
@@ -473,4 +483,14 @@ nrf_802154_rx_error_t nrf_802154_filter_frame_part(const uint8_t * p_data, uint8
     }
 
     return result;
+}
+
+bool nrf_802154_filter_last_dst_pan_id_get(uint8_t * p_pan_id)
+{
+    if (m_last_dst_pan_id_present)
+    {
+        memcpy(p_pan_id, m_last_dst_pan_id, PAN_ID_SIZE);
+    }
+
+    return m_last_dst_pan_id_present;
 }

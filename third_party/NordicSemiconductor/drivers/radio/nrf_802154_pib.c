@@ -49,7 +49,8 @@
 typedef struct
 {
     int8_t               tx_power;                             ///< Transmit power.
-    uint8_t              pan_id[PAN_ID_SIZE];                  ///< Pan Id of this node.
+    uint8_t              pan_id_list[NRF_802154_PIB_PAN_ID_LIST_SIZE][PAN_ID_SIZE]; ///< PAN Ids of this node, first one is the primary.
+    uint8_t              pan_id_count;                         ///< Number of valid entries in @ref pan_id_list.
     uint8_t              short_addr[SHORT_ADDRESS_SIZE];       ///< Short Address of this node.
     uint8_t              extended_addr[EXTENDED_ADDRESS_SIZE]; ///< Extended Address of this node.
     nrf_802154_cca_cfg_t cca;                                  ///< CCA mode and thresholds.
@@ -127,7 +128,9 @@ void nrf_802154_pib_init(void)
     m_data.pan_coord   = false;
     m_data.channel     = 11;
 
-    memset(m_data.pan_id, 0xff, sizeof(m_data.pan_id));
+    // A single broadcast PAN Id, as before the list was introduced.
+    memset(m_data.pan_id_list, 0xff, sizeof(m_data.pan_id_list));
+    m_data.pan_id_count  = 1;
     m_data.short_addr[0] = 0xfe;
     m_data.short_addr[1] = 0xff;
     memset(m_data.extended_addr, 0, sizeof(m_data.extended_addr));
@@ -192,12 +195,76 @@ void nrf_802154_pib_tx_power_set(int8_t dbm)
 
 const uint8_t * nrf_802154_pib_pan_id_get(void)
 {
-    return m_data.pan_id;
+    // The primary PAN Id. It is the broadcast PAN Id when the list is empty.
+    return m_data.pan_id_list[0];
 }
 
 void nrf_802154_pib_pan_id_set(const uint8_t * p_pan_id)
 {
-    memcpy(m_data.pan_id, p_pan_id, PAN_ID_SIZE);
+    memcpy(m_data.pan_id_list[0], p_pan_id, PAN_ID_SIZE);
+    m_data.pan_id_count = 1;
+}
+
+bool nrf_802154_pib_pan_id_add(const uint8_t * p_pan_id)
+{
+    bool result = true;
+
+    if (!nrf_802154_pib_pan_id_exists(p_pan_id))
+    {
+        if (m_data.pan_id_count < NRF_802154_PIB_PAN_ID_LIST_SIZE)
+        {
+            memcpy(m_data.pan_id_list[m_data.pan_id_count], p_pan_id, PAN_ID_SIZE);
+            m_data.pan_id_count++;
+        }
+        else
+        {
+            result = false;
+        }
+    }
+
+    return result;
+}
+
+void nrf_802154_pib_pan_id_list_set(const uint8_t * p_pan_ids, uint8_t count)
+{
+    if (count > NRF_802154_PIB_PAN_ID_LIST_SIZE)
+    {
+        count = NRF_802154_PIB_PAN_ID_LIST_SIZE;
+    }
+
+    if (count > 0)
+    {
+        memcpy(m_data.pan_id_list, p_pan_ids, (size_t)count * PAN_ID_SIZE);
+    }
+    else
+    {
+        memset(m_data.pan_id_list[0], 0xff, PAN_ID_SIZE);
+    }
+
+    m_data.pan_id_count = count;
+}
+
+const uint8_t * nrf_802154_pib_pan_id_list_get(uint8_t * p_count)
+{
+    *p_count = m_data.pan_id_count;
+
+    return &m_data.pan_id_list[0][0];
+}
+
+bool nrf_802154_pib_pan_id_exists(const uint8_t * p_pan_id)
+{
+    bool result = false;
+
+    for (uint8_t i = 0; i < m_data.pan_id_count; i++)
+    {
+        if (0 == memcmp(m_data.pan_id_list[i], p_pan_id, PAN_ID_SIZE))
+        {
+            result = true;
+            break;
+        }
+    }
+
+    return result;
 }
 
 const uint8_t * nrf_802154_pib_extended_address_get(void)

@@ -126,6 +126,9 @@ void nrf_802154_pib_tx_power_set(int8_t dbm);
 /**
  * @brief Gets the PAN ID used by this device.
  *
+ * With more than one PAN ID in the list, this is the first one (the primary PAN ID). With an empty
+ * list, this is the broadcast PAN ID.
+ *
  * @returns Pointer to the buffer containing the PAN ID value (2 bytes, little-endian).
  */
 const uint8_t * nrf_802154_pib_pan_id_get(void);
@@ -135,9 +138,52 @@ const uint8_t * nrf_802154_pib_pan_id_get(void);
  *
  * @param[in]  p_pan_id  Pointer to the PAN ID (2 bytes, little-endian).
  *
- * This function makes a copy of the PAN ID.
+ * This function makes a copy of the PAN ID. It replaces the whole PAN ID list with this single PAN ID.
  */
 void nrf_802154_pib_pan_id_set(const uint8_t * p_pan_id);
+
+/**
+ * @brief Adds a PAN ID to the list of PAN IDs accepted by this device.
+ *
+ * A PAN ID that is already in the list is not added again.
+ *
+ * @param[in]  p_pan_id  Pointer to the PAN ID (2 bytes, little-endian).
+ *
+ * @retval true   The PAN ID is in the list.
+ * @retval false  The list is full and the PAN ID was not added.
+ */
+bool nrf_802154_pib_pan_id_add(const uint8_t * p_pan_id);
+
+/**
+ * @brief Replaces the list of PAN IDs accepted by this device.
+ *
+ * The first PAN ID becomes the primary PAN ID. Entries beyond @ref NRF_802154_PIB_PAN_ID_LIST_SIZE
+ * are ignored. The caller must prevent the radio interrupt from running during this call, as the
+ * receive filter reads the list.
+ *
+ * @param[in]  p_pan_ids  Pointer to @p count PAN IDs (2 bytes each, little-endian).
+ * @param[in]  count      Number of PAN IDs.
+ */
+void nrf_802154_pib_pan_id_list_set(const uint8_t * p_pan_ids, uint8_t count);
+
+/**
+ * @brief Gets the list of PAN IDs accepted by this device.
+ *
+ * @param[out] p_count  Number of PAN IDs in the list.
+ *
+ * @returns Pointer to the buffer containing the PAN ID list (2 bytes per PAN ID, little-endian).
+ */
+const uint8_t * nrf_802154_pib_pan_id_list_get(uint8_t * p_count);
+
+/**
+ * @brief Checks if a PAN ID is in the list of PAN IDs accepted by this device.
+ *
+ * @param[in]  p_pan_id  Pointer to the PAN ID (2 bytes, little-endian).
+ *
+ * @retval true   The PAN ID is in the list.
+ * @retval false  The PAN ID is not in the list.
+ */
+bool nrf_802154_pib_pan_id_exists(const uint8_t * p_pan_id);
 
 /**
  * @brief Gets the extended address of this device.

@@ -185,9 +185,34 @@ void nrf_802154_fem_control_cfg_get(nrf_802154_fem_control_cfg_t * p_cfg);
  *
  * @param[in]  p_pan_id  Pointer to the PAN ID (2 bytes, little-endian).
  *
- * This function makes a copy of the PAN ID.
+ * This function makes a copy of the PAN ID. It replaces any PAN IDs added by
+ * @ref nrf_802154_pan_id_add or @ref nrf_802154_pan_id_list_set.
  */
 void nrf_802154_pan_id_set(const uint8_t * p_pan_id);
+
+/**
+ * @brief Adds a PAN ID to the PAN IDs accepted by the device.
+ *
+ * The receive filter accepts frames addressed to any PAN ID in the list. A PAN ID that is already
+ * in the list is not added again. At most @ref NRF_802154_PIB_PAN_ID_LIST_SIZE PAN IDs are kept.
+ *
+ * @param[in]  p_pan_id  Pointer to the PAN ID (2 bytes, little-endian).
+ *
+ * @retval true   The PAN ID is in the list.
+ * @retval false  The list is full and the PAN ID was not added.
+ */
+bool nrf_802154_pan_id_add(const uint8_t * p_pan_id);
+
+/**
+ * @brief Replaces the PAN IDs accepted by the device.
+ *
+ * The first PAN ID is the primary PAN ID (see @ref nrf_802154_pan_id_set). The radio interrupt
+ * must not run during this call, as the receive filter reads the list.
+ *
+ * @param[in]  p_pan_ids  Pointer to @p count PAN IDs (2 bytes each, little-endian).
+ * @param[in]  count      Number of PAN IDs.
+ */
+void nrf_802154_pan_id_list_set(const uint8_t * p_pan_ids, uint8_t count);
 
 /**
  * @brief Sets the extended address of the device.

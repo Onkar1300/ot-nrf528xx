@@ -183,6 +183,17 @@ extern "C" {
 #endif
 
 /**
+ * @def NRF_802154_PIB_PAN_ID_LIST_SIZE
+ *
+ * The maximum number of PAN IDs accepted by the receive filter at the same time.
+ * It matches the size of the OpenThread Multi-PAN key map (`OT_RADIO_MULTI_PAN_MAX_KEYS`).
+ *
+ */
+#ifndef NRF_802154_PIB_PAN_ID_LIST_SIZE
+#define NRF_802154_PIB_PAN_ID_LIST_SIZE 64
+#endif
+
+/**
  * @def NRF_802154_DISABLE_BCC_MATCHING
  *
  * Setting this flag disables NRF_RADIO_EVENT_BCMATCH handling, and therefore the address filtering

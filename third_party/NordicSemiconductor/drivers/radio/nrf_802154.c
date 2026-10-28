@@ -171,6 +171,16 @@ void nrf_802154_pan_id_set(const uint8_t * p_pan_id)
     nrf_802154_pib_pan_id_set(p_pan_id);
 }
 
+bool nrf_802154_pan_id_add(const uint8_t * p_pan_id)
+{
+    return nrf_802154_pib_pan_id_add(p_pan_id);
+}
+
+void nrf_802154_pan_id_list_set(const uint8_t * p_pan_ids, uint8_t count)
+{
+    nrf_802154_pib_pan_id_list_set(p_pan_ids, count);
+}
+
 void nrf_802154_extended_address_set(const uint8_t * p_extended_address)
 {
     nrf_802154_pib_extended_address_set(p_extended_address);
