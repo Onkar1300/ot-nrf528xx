@@ -57,6 +57,10 @@ else()
         "${PROJECT_SOURCE_DIR}/third_party/NordicSemiconductor/libraries/nrf_security/nrf_cc310_plat/include"
     )
 endif()
+if(OT_MULTI_PAN)
+    # The Multi-PAN key map is sent to the RCP in one large Spinel frame.
+    list(APPEND OT_PLATFORM_DEFINES "UART_RX_BUFFER_SIZE=2048")
+endif()
 
 set(OT_PLATFORM_DEFINES ${OT_PLATFORM_DEFINES} PARENT_SCOPE)
 target_compile_definitions(ot-config INTERFACE

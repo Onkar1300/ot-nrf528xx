@@ -46,6 +46,10 @@ list(APPEND OT_PUBLIC_INCLUDES
     "${PROJECT_SOURCE_DIR}/third_party/NordicSemiconductor/libraries/nrf_security/nrfx/mdk"
      "${PROJECT_SOURCE_DIR}/third_party/NordicSemiconductor/libraries/cmsis"
 )
+if(OT_MULTI_PAN)
+    # The Multi-PAN key map is sent to the RCP in one large Spinel frame.
+    list(APPEND OT_PLATFORM_DEFINES "UART_RX_BUFFER_SIZE=2048")
+endif()
 
 set(OT_PLATFORM_DEFINES ${OT_PLATFORM_DEFINES} PARENT_SCOPE)
 target_compile_definitions(ot-config INTERFACE
