@@ -1,3 +1,4 @@
 [submodule "openthread"]
 	path = openthread
-	url = https://github.com/openthread/openthread.git
+	url = https://github.com/mshahzad86/openthread
+	branch = feature/ot-multipan-v10
